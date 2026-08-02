@@ -1,0 +1,42 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: jenkins-backup
+  namespace: devops
+spec:
+  schedule: "0 2 * * *" # Runs daily at 2 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: backup-sa
+          containers:
+          - name: trigger
+            image: bitnami/kubectl:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              BACKUP_FILE="/tmp/jenkins-backup-${TIMESTAMP}.tar.gz"
+              BACKUP_BUCKET="devops-environment-488820-devops-backups"
+              
+              echo "Executing Jenkins backup inside the sidecar..."
+              # This command runs INSIDE the gcloud-backup container of the jenkins-0 pod
+              kubectl exec jenkins-0 -c gcloud-backup -- sh -c "
+                  tar -czf ${BACKUP_FILE} -C /var/jenkins_home \
+                      --exclude='workspace' --exclude='caches' --exclude='logs' --exclude='war' .
+                  gsutil cp ${BACKUP_FILE} gs://${BACKUP_BUCKET}/jenkins/
+                  rm ${BACKUP_FILE}
+              "
+              echo "Jenkins backup completed successfully!"
+            resources:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "200m"
+                memory: "256Mi"
+          restartPolicy: OnFailure

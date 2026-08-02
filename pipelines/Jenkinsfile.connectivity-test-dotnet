@@ -1,0 +1,47 @@
+pipeline {
+    agent {
+        label 'dotnet'
+    }
+
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        ansiColor('xterm')
+    }
+
+    stages {
+        stage('Check Environment') {
+            steps {
+                echo "--- Testing Environment ---"
+                sh "dotnet --version"
+                sh "git --version"
+                sh "curl --version"
+            }
+        }
+
+        stage('Test NuGet Connection') {
+            steps {
+                echo "--- Testing .NET Project Creation and Package Restore ---"
+                sh """
+                dotnet new console -o testapp
+                cd testapp
+                dotnet add package Newtonsoft.Json
+                """
+            }
+        }
+
+        stage('Test Outbound HTTP') {
+            steps {
+                echo "--- Testing Direct HTTP Access ---"
+                sh "curl -I https://www.google.com"
+                sh "curl -I https://api.nuget.org/v3/index.json"
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "--- Connectivity Verification Complete ---"
+            sh "rm -rf testapp"
+        }
+    }
+}

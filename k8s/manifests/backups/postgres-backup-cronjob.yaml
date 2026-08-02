@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: devops
+spec:
+  schedule: "0 3 * * *" # Runs daily at 3 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: backup-sa
+          containers:
+          - name: trigger
+            image: bitnami/kubectl:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              BACKUP_FILE="/tmp/postgres-backup-${TIMESTAMP}.sql.gz"
+              BACKUP_BUCKET="devops-environment-488820-devops-backups"
+              
+              echo "Executing Postgres backup inside the sidecar..."
+              # Reach into the postgres pod and tell the sidecar to dump the DB
+              # Note: We use \$ to ensure the variables are evaluated INSIDE the pod, not in the trigger pod
+              kubectl exec deployment/postgres -c gcloud-backup -- sh -c "
+                  echo 'Installing postgresql-client...'
+                  apk add --no-cache postgresql-client
+                  
+                  echo 'Dumping database...'
+                  pg_dump -h localhost -U \$POSTGRES_USER \$POSTGRES_DB | gzip > ${BACKUP_FILE}
+                  
+                  echo 'Uploading to GCS...'
+                  gsutil cp ${BACKUP_FILE} gs://${BACKUP_BUCKET}/postgres/
+                  rm ${BACKUP_FILE}
+              "
+              echo "Postgres backup completed successfully!"
+            resources:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "200m"
+                memory: "256Mi"
+          restartPolicy: OnFailure

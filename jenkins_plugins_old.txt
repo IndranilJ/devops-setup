@@ -1,0 +1,35 @@
+# ---------------- Pipeline Core ----------------
+workflow-aggregator
+
+# ---------------- SCM ----------------
+git
+github
+github-branch-source
+
+# ---------------- Testing & Quality ----------------
+junit
+sonar
+warnings-ng
+
+# ---------------- Security ----------------
+credentials
+credentials-binding
+matrix-auth
+role-strategy
+
+# ---------------- Containers / Cloud ----------------
+docker-workflow
+kubernetes
+
+# ---------------- Artifacts ----------------
+nexus-artifact-uploader
+
+# ---------------- UI / UX ----------------
+pipeline-stage-view
+blueocean
+build-timeout
+timestamper
+rebuild
+
+# ---------------- Configuration ----------------
+configuration-as-code

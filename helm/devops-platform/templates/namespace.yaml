@@ -1,0 +1,38 @@
+{{/*
+=============================================================================
+namespace.yaml — Namespace + ResourceQuota
+=============================================================================
+HELM TEMPLATE SYNTAX EXPLAINED:
+
+  {{ .Values.global.namespace }}
+  Reads the "namespace" key inside "global" from values.yaml.
+  The leading dot (.) means "current context" — always the chart's values.
+
+  {{- include "devops-platform.labels" . | nindent 4 }}
+  Calls the helper defined in _helpers.tpl, pipes output through nindent
+  which adds a newline + 4 spaces of indentation to each line.
+
+  YAML "---" separates multiple K8s resources in one file.
+  Helm renders the entire file and sends all resources to Kubernetes.
+=============================================================================
+*/}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.global.namespace }}
+  labels:
+    {{- include "devops-platform.labels" . | nindent 4 }}
+---
+# ResourceQuota limits total CPU and memory consumed by the devops namespace.
+# Sized to accommodate 4 base services + Jenkins ephemeral build agents.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: devops-quota
+  namespace: {{ .Values.global.namespace }}
+spec:
+  hard:
+    requests.cpu:    {{ .Values.resourceQuota.requestsCpu | quote }}
+    requests.memory: {{ .Values.resourceQuota.requestsMemory | quote }}
+    limits.cpu:      {{ .Values.resourceQuota.limitsCpu | quote }}
+    limits.memory:   {{ .Values.resourceQuota.limitsMemory | quote }}

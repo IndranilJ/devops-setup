@@ -1,0 +1,46 @@
+pipeline {
+    agent { label 'built-in' }
+    environment {
+        BACKUP_BUCKET = "devops-environment-488820-devops-backups"
+    }
+    stages {
+        stage('Backup Jenkins Home') {
+            steps {
+                sh '''
+                    set -e
+                    echo "Starting Jenkins Home backup on built-in node..."
+                    
+                    # 1. Fetch Auth Token from Google Metadata Server (Workload Identity)
+                    TOKEN=$(curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token | sed 's/.*"access_token":"\\([^"]*\\)".*/\\1/')
+                    
+                    if [ -z "$TOKEN" ]; then
+                        echo "ERROR: Failed to fetch auth token from metadata server."
+                        exit 1
+                    fi
+                    
+                    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                    BACKUP_FILE="/tmp/jenkins-backup-${TIMESTAMP}.tar.gz"
+                    
+                    echo "Archiving /var/jenkins_home..."
+                    tar -czf ${BACKUP_FILE} -C /var/jenkins_home \
+                        --exclude='workspace' \
+                        --exclude='caches' \
+                        --exclude='logs' \
+                        --exclude='war' \
+                        .
+                    
+                    echo "Uploading to GCS: gs://${BACKUP_BUCKET}/jenkins/"
+                    curl -s -X POST --data-binary @${BACKUP_FILE} \
+                        -H "Authorization: Bearer $TOKEN" \
+                        -H "Content-Type: application/gzip" \
+                        "https://storage.googleapis.com/upload/storage/v1/b/${BACKUP_BUCKET}/o?uploadType=media&name=jenkins/jenkins-backup-${TIMESTAMP}.tar.gz"
+                    
+                    echo "Cleaning up temporary file..."
+                    rm ${BACKUP_FILE}
+                    
+                    echo "Backup process completed successfully!"
+                '''
+            }
+        }
+    }
+}

@@ -1,0 +1,73 @@
+pipeline {
+    agent {
+        label 'python'
+    }
+
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        ansiColor('xterm')
+    }
+
+    stages {
+        stage('Check Environment') {
+            steps {
+                echo "--- Testing Environment ---"
+                sh "python --version"
+                sh "pip --version"
+                sh "git --version"
+                sh "curl --version"
+            }
+        }
+
+        stage('Test GitHub Clone') {
+            steps {
+                echo "--- Testing Git Clone from GitHub ---"
+                dir('hello-world-test') {
+                    sh "git clone https://github.com/octocat/Hello-World.git ."
+                    sh "ls -la"
+                }
+            }
+        }
+
+        stage('Test PyPI Connection') {
+            steps {
+                echo "--- Testing Pip Install (PyPI) via Virtualenv ---"
+                sh """
+                python3 -m venv venv
+                . venv/bin/activate
+                pip install requests
+                """
+            }
+        }
+
+        stage('Test Outbound HTTP') {
+            steps {
+                echo "--- Testing Direct HTTP Access ---"
+                // Test reachability to a public endpoint
+                sh "curl -I https://www.google.com"
+                
+                echo "--- Running Python Internet Test ---"
+                sh """
+                . venv/bin/activate
+                python3 -c "
+import requests
+try:
+    r = requests.get('https://api.github.com', timeout=5)
+    print(f'Successfully reached GitHub API. Status Code: {r.status_code}')
+except Exception as e:
+    print(f'Failed to reach internet: {e}')
+    exit(1)
+                "
+                """
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "--- Connectivity Verification Complete ---"
+            // Cleanup cloned repo
+            sh "rm -rf hello-world-test"
+        }
+    }
+}

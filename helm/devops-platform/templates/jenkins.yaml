@@ -1,0 +1,264 @@
+{{/*
+=============================================================================
+jenkins.yaml — Jenkins StatefulSet + Service + PVC + RBAC + ConfigMaps
+=============================================================================
+HELM CONCEPT: CONFIGMAP FROM FILES
+
+In your old setup, Kustomize's configMapGenerator read local files and turned
+them into a ConfigMap. In Helm, you use the .Files object:
+
+  {{ .Files.Get "config/jenkins.yaml" }}
+
+This reads a file relative to the chart root and embeds its content.
+The files live in helm/devops-platform/config/ (a folder we create for static files).
+
+HELM CONCEPT: toYaml + nindent
+
+  {{ .Values.jenkins.resources | toYaml | nindent 12 }}
+
+  toYaml   = converts the Go map from values.yaml into a YAML string
+  nindent 12 = indents each line by 12 spaces (for correct YAML nesting)
+
+  This is how you embed a nested map (like resources: requests/limits)
+  from values.yaml into a template without writing each field manually.
+
+HELM CONCEPT: printf
+
+  {{ printf "%s/%s:%s" .Values.global.artifactRegistry "jenkins-python-agent" .Values.jenkins.agentImageVersion }}
+
+  Like string formatting. Builds the full image path dynamically.
+=============================================================================
+*/}}
+
+# ── PERSISTENT VOLUME CLAIM ──────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.jenkins.storage.pvcName }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "devops-platform.componentLabels" "jenkins" | nindent 4 }}
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.storageClass.name }}
+  volumeName: {{ .Values.jenkins.storage.pvName }}
+  resources:
+    requests:
+      storage: {{ .Values.jenkins.storage.size }}
+---
+# ── RBAC: JENKINS AGENT PERMISSIONS ─────────────────────────────────────────
+# Allows Jenkins to create/delete pods for build agents in the devops namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jenkins-agent-role
+  namespace: {{ .Values.global.namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec", "pods/log"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-agent-rolebinding
+  namespace: {{ .Values.global.namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: {{ .Values.global.namespace }}
+roleRef:
+  kind: Role
+  name: jenkins-agent-role
+  apiGroup: rbac.authorization.k8s.io
+---
+{{/*
+=============================================================================
+NOTE: jenkins-casc-config ConfigMap is NOT managed by Helm.
+
+WHY: Helm's .Files.Get can only read files inside the chart directory. Our
+config files now live at the project root (config/jenkins/) as a single
+source of truth shared between Helm, Kustomize, and scripts.
+
+HOW IT IS CREATED:
+  devops-env.ps1 -Action setup  creates it via:
+    kubectl create configmap jenkins-casc-config
+      --from-file=jenkins.yaml=config/jenkins/jenkins-casc.yaml
+      --from-file=plugins.txt=config/jenkins/plugins.txt
+      --from-file=jenkins_jobs.groovy=config/jenkins/jenkins-jobs.groovy
+      --namespace devops --dry-run=client -o yaml | kubectl apply -f -
+
+HOW TO APPLY CONFIG CHANGES (after editing config/jenkins/ files):
+  Step 1: Re-apply the ConfigMap
+    kubectl create configmap jenkins-casc-config \
+      --from-file=jenkins.yaml=config/jenkins/jenkins-casc.yaml \
+      --from-file=plugins.txt=config/jenkins/plugins.txt \
+      --from-file=jenkins_jobs.groovy=config/jenkins/jenkins-jobs.groovy \
+      --namespace devops --dry-run=client -o yaml | kubectl apply -f -
+
+  Step 2: Restart Jenkins to pick up the new ConfigMap
+    kubectl rollout restart statefulset/jenkins -n devops
+
+  See ADMIN_RUNBOOK.md § "Updating Jenkins Configuration" for full procedure.
+=============================================================================
+*/}}
+
+# ── SERVICE ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: jenkins
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "devops-platform.componentLabels" "jenkins" | nindent 4 }}
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
+    - port: 50000
+      targetPort: 50000
+      protocol: TCP
+      name: agent
+  selector:
+    app.kubernetes.io/name: jenkins
+---
+# ── STATEFULSET ───────────────────────────────────────────────────────────────
+# HELM CONCEPT: toYaml | nindent
+# .Values.jenkins.resources is a nested map in values.yaml.
+# toYaml converts it to a YAML string, nindent indents it for correct nesting.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: jenkins
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "devops-platform.componentLabels" "jenkins" | nindent 4 }}
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  serviceName: jenkins
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jenkins
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jenkins
+    spec:
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+      initContainers:
+        - name: fix-permissions
+          image: {{ .Values.images.busybox.repository }}:{{ .Values.images.busybox.tag }}
+          command: ["sh", "-c", "chown -R 1000:1000 /var/jenkins_home"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: jenkins-home
+              mountPath: /var/jenkins_home
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+        - name: install-plugins
+          image: {{ .Values.jenkins.repository }}:{{ .Values.jenkins.tag }}
+          command: ["sh", "-c", "jenkins-plugin-cli --plugin-file /var/jenkins_config/plugins.txt --plugin-download-directory /var/jenkins_home/plugins"]
+          volumeMounts:
+            - name: jenkins-home
+              mountPath: /var/jenkins_home
+            - name: casc-config
+              mountPath: /var/jenkins_config
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+      containers:
+        - name: jenkins
+          image: {{ .Values.jenkins.repository }}:{{ .Values.jenkins.tag }}
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 50000
+              name: agent
+          resources:
+            {{- toYaml .Values.jenkins.resources | nindent 12 }}
+          env:
+            - name: JAVA_OPTS
+              value: {{ .Values.jenkins.javaOpts | quote }}
+            - name: CASC_JENKINS_CONFIG
+              value: "/var/jenkins_config/jenkins.yaml"
+            - name: JENKINS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.jenkins.adminPasswordSecret }}
+                  key: JENKINS_ADMIN_PASSWORD
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.jenkins.githubTokenSecret }}
+                  key: GITHUB_TOKEN
+            - name: ARTIFACT_REGISTRY_PROJECT
+              value: {{ .Values.global.projectId | quote }}
+            - name: AGENT_IMAGE_VERSION
+              value: {{ .Values.jenkins.agentImageVersion | quote }}
+            - name: GITHUB_REPO_URL
+              value: {{ .Values.jenkins.githubRepoUrl | quote }}
+          livenessProbe:
+            httpGet:
+              path: /login
+              port: 8080
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 3
+          volumeMounts:
+            - name: jenkins-home
+              mountPath: /var/jenkins_home
+            - name: casc-config
+              mountPath: /var/jenkins_config
+        - name: gcloud-backup
+          image: {{ .Values.images.gcloudSdk.repository }}:{{ .Values.images.gcloudSdk.tag }}
+          env:
+            - name: HOME
+              value: /tmp
+          command: ["sh", "-c", "tail -f /dev/null"]
+          volumeMounts:
+            - name: jenkins-home
+              mountPath: /var/jenkins_home
+              readOnly: true
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "100m"
+              memory: "256Mi"
+      volumes:
+        - name: jenkins-home
+          persistentVolumeClaim:
+            claimName: {{ .Values.jenkins.storage.pvcName }}
+        - name: casc-config
+          configMap:
+            name: jenkins-casc-config

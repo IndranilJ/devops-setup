@@ -1,0 +1,97 @@
+jenkins:
+  systemMessage: "Jenkins configured via Configuration as Code (JCasC) by comparing hashes"
+  numExecutors: 2
+  mode: NORMAL
+  scmCheckoutRetryCount: 3
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+       - id: "admin"
+         password: "${JENKINS_ADMIN_PASSWORD}"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+
+  clouds:
+    - kubernetes:
+        name: "kubernetes"
+        serverUrl: "https://kubernetes.default.svc.cluster.local"
+        namespace: "devops"
+        jenkinsUrl: "http://jenkins.devops.svc.cluster.local"
+        podRetention: "never"
+        templates:
+          - name: "python-agent"
+            label: "python"
+            showRawYaml: false
+            nodeUsageMode: "EXCLUSIVE"
+            containers:
+              - name: "jnlp"
+                image: "us-central1-docker.pkg.dev/${ARTIFACT_REGISTRY_PROJECT}/devops-agents/jenkins-python-agent:${AGENT_IMAGE_VERSION}"
+                args: "^${computer.jnlpmac} ^${computer.name}"
+                privileged: true
+                ttyEnabled: true
+                resourceLimitCpu: "500m"
+                resourceLimitMemory: "1Gi"
+                resourceRequestCpu: "100m"
+                resourceRequestMemory: "256Mi"
+          - name: "maven-agent"
+            label: "maven"
+            showRawYaml: false
+            nodeUsageMode: "EXCLUSIVE"
+            containers:
+              - name: "jnlp"
+                image: "us-central1-docker.pkg.dev/${ARTIFACT_REGISTRY_PROJECT}/devops-agents/jenkins-maven-agent:${AGENT_IMAGE_VERSION}"
+                args: "^${computer.jnlpmac} ^${computer.name}"
+                privileged: true
+                ttyEnabled: true
+                resourceLimitCpu: "1000m"
+                resourceLimitMemory: "2Gi"
+                resourceRequestCpu: "100m"
+                resourceRequestMemory: "512Mi"
+          - name: "nodejs-agent"
+            label: "nodejs"
+            showRawYaml: false
+            nodeUsageMode: "EXCLUSIVE"
+            containers:
+              - name: "jnlp"
+                image: "us-central1-docker.pkg.dev/${ARTIFACT_REGISTRY_PROJECT}/devops-agents/jenkins-nodejs-agent:${AGENT_IMAGE_VERSION}"
+                args: "^${computer.jnlpmac} ^${computer.name}"
+                privileged: true
+                ttyEnabled: true
+                resourceLimitCpu: "500m"
+                resourceLimitMemory: "1Gi"
+                resourceRequestCpu: "100m"
+                resourceRequestMemory: "256Mi"
+          - name: "dotnet-agent"
+            label: "dotnet"
+            showRawYaml: false
+            nodeUsageMode: "EXCLUSIVE"
+            containers:
+              - name: "jnlp"
+                image: "us-central1-docker.pkg.dev/${ARTIFACT_REGISTRY_PROJECT}/devops-agents/jenkins-dotnet-agent:${AGENT_IMAGE_VERSION}"
+                args: "^${computer.jnlpmac} ^${computer.name}"
+                privileged: true
+                ttyEnabled: true
+                resourceLimitCpu: "500m"
+                resourceLimitMemory: "1Gi"
+                resourceRequestCpu: "100m"
+                resourceRequestMemory: "256Mi"
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - string:
+              scope: GLOBAL
+              id: "github-token"
+              secret: "${GITHUB_TOKEN}"
+
+
+jobs:
+  - targets:
+      - /var/jenkins_config/seed-bootstrap.groovy
+
+unclassified:
+  location:
+    url: http://34.10.128.82/

@@ -1,0 +1,45 @@
+pipeline {
+    agent {
+        label 'maven'
+    }
+
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        ansiColor('xterm')
+    }
+
+    stages {
+        stage('Check Environment') {
+            steps {
+                echo "--- Testing Environment ---"
+                sh "java -version"
+                sh "mvn --version"
+                sh "git --version"
+                sh "curl --version"
+            }
+        }
+
+        stage('Test Maven Central Connection') {
+            steps {
+                echo "--- Testing Maven Dependency Download ---"
+                // Run a simple command that requires downloading a plugin/dependency
+                sh "mvn help:system -Dmaven.repo.local=.m2/repository"
+            }
+        }
+
+        stage('Test Outbound HTTP') {
+            steps {
+                echo "--- Testing Direct HTTP Access ---"
+                sh "curl -I https://www.google.com"
+                sh "curl -I https://repo.maven.apache.org/maven2/"
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "--- Connectivity Verification Complete ---"
+            sh "rm -rf .m2"
+        }
+    }
+}

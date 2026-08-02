@@ -1,0 +1,150 @@
+version: '3.8'
+
+# Define named volumes for portability across OS (Windows/Linux/Cloud).
+# Avoids hardcoded host paths like C:/docker/... which break in non-Windows environments.
+
+# volumes:
+#   jenkins_home:
+#   sonarqube_data:
+#   sonarqube_logs:
+#   sonarqube_extensions:
+#   postgres_data:
+#   nexus_data:
+
+networks:
+  devops_net:
+    driver: bridge # Default is 'bridge'; uncomment and customize if needed in the future
+
+services:
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: jenkins
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    environment:
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
+      # Externalized SonarQube and Nexus URLs for clarity
+      - SONAR_HOST_URL=http://sonarqube:9000
+      - NEXUS_URL=http://nexus:8081
+    volumes:
+      - C:/docker/jenkins_home:/var/jenkins_home
+      - ./jenkins_plugins.txt:/usr/share/jenkins/ref/plugins.txt:ro
+      - ./init.groovy.d:/var/jenkins_home/init.groovy.d
+    networks:
+      - devops_net
+    command: >
+      bash -c "jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt &&
+               exec /usr/bin/tini -- /usr/local/bin/jenkins.sh"
+    # Healthcheck ensures Jenkins is ready before agents connect
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  sonarqube:
+    image: sonarqube:latest
+    container_name: sonarqube
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    environment:
+      - SONARQUBE_JDBC_URL=jdbc:postgresql://db:5432/sonar
+      - SONARQUBE_JDBC_USERNAME=${POSTGRES_USER}   # ✅ Externalized via .env
+      - SONARQUBE_JDBC_PASSWORD=${POSTGRES_PASSWORD} # ✅ Avoids plaintext in compose
+    volumes:
+      - C:/docker/sonarqube_data:/opt/sonarqube/data
+      - C:/docker/sonarqube_logs:/opt/sonarqube/logs
+      - C:/docker/sonarqube_extensions:/opt/sonarqube/extensions
+    depends_on:
+      - db
+    networks:
+      - devops_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  db:
+    image: postgres:13
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}       # ✅ Externalized
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD} # ✅ Externalized
+      - POSTGRES_DB=${POSTGRES_DB}           # ✅ Externalized
+    volumes:
+      - C:/docker/postgres_data:/var/lib/postgresql/data
+    networks:
+      - devops_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  nexus:
+    image: sonatype/nexus3:latest 
+    container_name: nexus
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    volumes:
+      - C:/docker/nexus_data:/nexus-data
+    networks:
+      - devops_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  agent-python:
+    user: root
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    build:
+      context: ./agents
+      dockerfile: Dockerfile.python-agent
+    environment:
+      - JENKINS_URL=http://jenkins:8080
+      - JENKINS_AGENT_NAME=agent-python
+      - JENKINS_SECRET=${JENKINS_SECRET_PYTHON}
+    networks:
+      - devops_net
+
+  # agent-node:
+  #   build:
+  #     context: ./agents
+  #     dockerfile: Dockerfile.node
+  #   environment:
+  #     - JENKINS_URL=http://jenkins:8080
+  #     - JENKINS_AGENT_NAME=agent-node
+  #     - JENKINS_SECRET=${JENKINS_SECRET_NODE}
+  #   networks:
+  #     - devops_net
+
+  # agent-dotnet:
+  #   build:
+  #     context: ./agents
+  #     dockerfile: Dockerfile.dotnet
+  #   environment:
+  #     - JENKINS_URL=http://jenkins:8080
+  #     - JENKINS_AGENT_NAME=agent-dotnet
+  #     - JENKINS_SECRET=${JENKINS_SECRET_DOTNET}
+  #   networks:
+  #     - devops_net
+
+  # agent-maven:
+  #   build:
+  #     context: ./agents
+  #     dockerfile: Dockerfile.maven
+  #   environment:
+  #     - JENKINS_URL=http://jenkins:8080
+  #     - JENKINS_AGENT_NAME=agent-maven
+  #     - JENKINS_SECRET=${JENKINS_SECRET_MAVEN}
+  #   networks:
+  #     - devops_net

@@ -1,0 +1,44 @@
+pipeline {
+    agent {
+        label 'nodejs'
+    }
+
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        ansiColor('xterm')
+    }
+
+    stages {
+        stage('Check Environment') {
+            steps {
+                echo "--- Testing Environment ---"
+                sh "node --version"
+                sh "npm --version"
+                sh "git --version"
+                sh "curl --version"
+            }
+        }
+
+        stage('Test NPM Registry Connection') {
+            steps {
+                echo "--- Testing NPM Package Download ---"
+                sh "npm install axios"
+            }
+        }
+
+        stage('Test Outbound HTTP') {
+            steps {
+                echo "--- Testing Direct HTTP Access ---"
+                sh "curl -I https://www.google.com"
+                sh "curl -I https://registry.npmjs.org/"
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "--- Connectivity Verification Complete ---"
+            sh "rm -rf node_modules package-lock.json"
+        }
+    }
+}

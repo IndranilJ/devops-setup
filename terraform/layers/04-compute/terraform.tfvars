@@ -1,0 +1,5 @@
+project_id   = "devops-environment-488820"
+region       = "us-central1"
+zone         = "us-central1-a"
+network_name = "devops-vpc"
+cluster_name = "devops-cluster"

@@ -1,0 +1,60 @@
+pipeline {
+    agent none
+    
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        ansiColor('xterm')
+    }
+
+    stages {
+        stage('Test Agents') {
+            parallel {
+                stage('Test Python Agent') {
+                    agent { label 'python' }
+                    steps {
+                        echo "--- Verifying Python Agent ---"
+                        sh '/entrypoint.sh --verify'
+                        sh 'python --version'
+                        sh 'pip --version'
+                    }
+                }
+
+                stage('Test Maven Agent') {
+                    agent { label 'maven' }
+                    steps {
+                        echo "--- Verifying Maven Agent ---"
+                        sh '/entrypoint.sh --verify'
+                        sh 'mvn -version'
+                        sh 'java -version'
+                    }
+                }
+
+                stage('Test NodeJS Agent') {
+                    agent { label 'nodejs' }
+                    steps {
+                        echo "--- Verifying NodeJS Agent ---"
+                        sh '/entrypoint.sh --verify'
+                        sh 'node -v'
+                        sh 'npm -v'
+                    }
+                }
+
+                stage('Test Dotnet Agent') {
+                    agent { label 'dotnet' }
+                    steps {
+                        echo "--- Verifying Dotnet Agent ---"
+                        sh '/entrypoint.sh --verify'
+                        sh 'dotnet --version'
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "--- Agent Verification Complete ---"
+        }
+    }
+}

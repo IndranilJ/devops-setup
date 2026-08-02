@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: jenkins-pv
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: devops-retained-storage
+  csi:
+    driver: pd.csi.storage.gke.io
+    volumeHandle: projects/devops-environment-488820/zones/us-central1-a/disks/jenkins-home-disk
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nexus-pv
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: devops-retained-storage
+  csi:
+    driver: pd.csi.storage.gke.io
+    volumeHandle: projects/devops-environment-488820/zones/us-central1-a/disks/nexus-data-disk
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: sonarqube-pv
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: devops-retained-storage
+  csi:
+    driver: pd.csi.storage.gke.io
+    volumeHandle: projects/devops-environment-488820/zones/us-central1-a/disks/sonarqube-data-disk
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: postgres-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: devops-retained-storage
+  csi:
+    driver: pd.csi.storage.gke.io
+    volumeHandle: projects/devops-environment-488820/zones/us-central1-a/disks/postgres-data-disk

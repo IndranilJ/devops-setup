@@ -1,0 +1,150 @@
+{{/*
+=============================================================================
+sonarqube.yaml — SonarQube Deployment + Service + PVC
+=============================================================================
+HELM CONCEPT: quote filter
+
+  value: {{ .Values.sonarqube.dbSecret | quote }}
+
+The | quote filter wraps the value in double quotes.
+This is important for string values that Kubernetes expects to be quoted.
+Without it, a value like "sonar" would render as: value: sonar (no quotes)
+which can sometimes cause YAML parsing issues.
+=============================================================================
+*/}}
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.sonarqube.storage.pvcName }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "devops-platform.componentLabels" "sonarqube" | nindent 4 }}
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.storageClass.name }}
+  volumeName: {{ .Values.sonarqube.storage.pvName }}
+  resources:
+    requests:
+      storage: {{ .Values.sonarqube.storage.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sonarqube
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "devops-platform.componentLabels" "sonarqube" | nindent 4 }}
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 9000
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: sonarqube
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sonarqube
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "devops-platform.componentLabels" "sonarqube" | nindent 4 }}
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sonarqube
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sonarqube
+    spec:
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+      initContainers:
+        - name: fix-permissions
+          image: {{ .Values.images.busybox.repository }}:{{ .Values.images.busybox.tag }}
+          command: ["sh", "-c", "chown -R 1000:1000 /opt/sonarqube/data /opt/sonarqube/extensions"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: sonarqube-storage
+              mountPath: /opt/sonarqube/data
+              subPath: data
+            - name: sonarqube-storage
+              mountPath: /opt/sonarqube/extensions
+              subPath: extensions
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+        - name: init-sysctl
+          image: {{ .Values.images.busybox.repository }}:{{ .Values.images.busybox.tag }}
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+      containers:
+        - name: sonarqube
+          image: {{ .Values.sonarqube.repository }}:{{ .Values.sonarqube.tag }}
+          ports:
+            - containerPort: 9000
+              name: http
+          env:
+            - name: SONAR_JDBC_URL
+              value: "jdbc:postgresql://postgres:5432/sonar"
+            - name: SONAR_JDBC_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sonarqube.dbSecret }}
+                  key: POSTGRES_USER
+            - name: SONAR_JDBC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sonarqube.dbSecret }}
+                  key: POSTGRES_PASSWORD
+          resources:
+            {{- toYaml .Values.sonarqube.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /api/system/status
+              port: 9000
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /api/system/status
+              port: 9000
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 3
+          volumeMounts:
+            - name: sonarqube-storage
+              mountPath: /opt/sonarqube/data
+              subPath: data
+            - name: sonarqube-storage
+              mountPath: /opt/sonarqube/extensions
+              subPath: extensions
+      volumes:
+        - name: sonarqube-storage
+          persistentVolumeClaim:
+            claimName: {{ .Values.sonarqube.storage.pvcName }}

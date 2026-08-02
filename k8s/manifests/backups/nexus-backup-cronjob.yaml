@@ -1,0 +1,42 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nexus-backup
+  namespace: devops
+spec:
+  schedule: "0 4 * * *" # Runs daily at 4 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: backup-sa
+          containers:
+          - name: trigger
+            image: bitnami/kubectl:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              BACKUP_FILE="/tmp/nexus-backup-${TIMESTAMP}.tar.gz"
+              BACKUP_BUCKET="devops-environment-488820-devops-backups"
+              
+              echo "Executing backup command inside the Nexus sidecar..."
+              # This command runs INSIDE the gcloud-backup container of the nexus-0 pod
+              kubectl exec nexus-0 -c gcloud-backup -- sh -c "
+                  tar -czf ${BACKUP_FILE} -C /nexus-data \
+                      --exclude='cache' --exclude='tmp' .
+                  gsutil cp ${BACKUP_FILE} gs://${BACKUP_BUCKET}/nexus/
+                  rm ${BACKUP_FILE}
+              "
+              echo "Nexus backup completed successfully!"
+            resources:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "200m"
+                memory: "256Mi"
+          restartPolicy: OnFailure

@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: devops
+
+resources:
+  - pvc.yaml
+  - service.yaml
+  - statefulset.yaml
+  - rbac.yaml
+
+# configMapGenerator reads files from the SINGLE SOURCE at config/jenkins/
+# (project root), NOT from this directory. Relative path: 4 levels up.
+# The key names (left of =) are how the files appear inside the ConfigMap.
+configMapGenerator:
+- name: jenkins-casc-config
+  files:
+    - jenkins.yaml=../../../config/jenkins/jenkins-casc.yaml
+    - plugins.txt=../../../config/jenkins/plugins.txt
+    - jenkins_jobs.groovy=../../../config/jenkins/jenkins-jobs.groovy
+
+# Changing any file in config/jenkins/ generates a new ConfigMap name hash,
+# which causes the StatefulSet to roll (automatic restart on config change).
+generatorOptions:
+  disableNameSuffixHash: false

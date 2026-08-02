@@ -1,0 +1,189 @@
+{{/*
+=============================================================================
+backups.yaml — Backup CronJobs + RBAC for backup service account
+=============================================================================
+HELM CONCEPT: .Values.global.backupBucket
+
+All three backup CronJobs share the same GCS bucket path, read from values.yaml.
+Changing the bucket name in ONE place updates all three cronjobs.
+
+HELM CONCEPT: .Values.jenkins.backup.schedule etc.
+Each service has its own backup schedule, independently configurable.
+=============================================================================
+*/}}
+
+# ── BACKUP SERVICE ACCOUNT + RBAC ────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup-sa
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "devops-platform.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: backup-role
+  namespace: {{ .Values.global.namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backup-rolebinding
+  namespace: {{ .Values.global.namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: backup-sa
+    namespace: {{ .Values.global.namespace }}
+roleRef:
+  kind: Role
+  name: backup-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# ── JENKINS BACKUP CRONJOB ────────────────────────────────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: jenkins-backup
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.jenkins.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: backup-sa
+          containers:
+          - name: trigger
+            image: {{ .Values.images.kubectlSidecar.repository }}:{{ .Values.images.kubectlSidecar.tag }}
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              BACKUP_FILE="/tmp/jenkins-backup-${TIMESTAMP}.tar.gz"
+              BACKUP_BUCKET="{{ .Values.global.backupBucket }}"
+
+              echo "Executing Jenkins backup inside the sidecar..."
+              kubectl exec jenkins-0 -c gcloud-backup -- sh -c "
+                  tar -czf ${BACKUP_FILE} -C /var/jenkins_home \
+                      --exclude='workspace' --exclude='caches' --exclude='logs' --exclude='war' .
+                  gsutil cp ${BACKUP_FILE} gs://${BACKUP_BUCKET}/jenkins/
+                  rm ${BACKUP_FILE}
+              "
+              echo "Jenkins backup completed successfully!"
+            resources:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "200m"
+                memory: "256Mi"
+          restartPolicy: OnFailure
+---
+# ── NEXUS BACKUP CRONJOB ──────────────────────────────────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nexus-backup
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.nexus.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: backup-sa
+          containers:
+          - name: trigger
+            image: {{ .Values.images.kubectlSidecar.repository }}:{{ .Values.images.kubectlSidecar.tag }}
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              BACKUP_FILE="/tmp/nexus-backup-${TIMESTAMP}.tar.gz"
+              BACKUP_BUCKET="{{ .Values.global.backupBucket }}"
+
+              echo "Executing backup command inside the Nexus sidecar..."
+              kubectl exec nexus-0 -c gcloud-backup -- sh -c "
+                  tar -czf ${BACKUP_FILE} -C /nexus-data \
+                      --exclude='cache' --exclude='tmp' .
+                  gsutil cp ${BACKUP_FILE} gs://${BACKUP_BUCKET}/nexus/
+                  rm ${BACKUP_FILE}
+              "
+              echo "Nexus backup completed successfully!"
+            resources:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "200m"
+                memory: "256Mi"
+          restartPolicy: OnFailure
+---
+# ── POSTGRES BACKUP CRONJOB ───────────────────────────────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.postgres.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: backup-sa
+          containers:
+          - name: trigger
+            image: {{ .Values.images.kubectlSidecar.repository }}:{{ .Values.images.kubectlSidecar.tag }}
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              BACKUP_FILE="/tmp/postgres-backup-${TIMESTAMP}.sql.gz"
+              BACKUP_BUCKET="{{ .Values.global.backupBucket }}"
+
+              echo "Executing Postgres backup inside the sidecar..."
+              kubectl exec deployment/postgres -c gcloud-backup -- sh -c "
+                  echo 'Installing postgresql-client...'
+                  apk add --no-cache postgresql-client
+
+                  echo 'Dumping database...'
+                  pg_dump -h localhost -U \$POSTGRES_USER \$POSTGRES_DB | gzip > ${BACKUP_FILE}
+
+                  echo 'Uploading to GCS...'
+                  gsutil cp ${BACKUP_FILE} gs://${BACKUP_BUCKET}/postgres/
+                  rm ${BACKUP_FILE}
+              "
+              echo "Postgres backup completed successfully!"
+            resources:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "200m"
+                memory: "256Mi"
+          restartPolicy: OnFailure

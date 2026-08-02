@@ -1,0 +1,102 @@
+{{/*
+=============================================================================
+storage.yaml — StorageClass + PersistentVolumes
+=============================================================================
+HELM TEMPLATE SYNTAX: MULTIPLE RESOURCES WITH ---
+
+You can define as many K8s resources as you want in a single template file,
+separated by ---. Helm renders them all together.
+
+{{ .Values.storageClass.name }} reads storageClass.name from values.yaml.
+
+{{ .Values.global.projectId }} reads global.projectId from values.yaml.
+=============================================================================
+*/}}
+
+# StorageClass: tells Kubernetes HOW to provision storage disks.
+# reclaimPolicy: Retain means the GCP disk is NOT deleted when the PVC is deleted.
+# This is critical for production data safety.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.storageClass.name }}
+  labels:
+    {{- include "devops-platform.labels" . | nindent 4 }}
+provisioner: {{ .Values.storageClass.provisioner }}
+reclaimPolicy: {{ .Values.storageClass.reclaimPolicy }}
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: {{ .Values.storageClass.diskType }}
+---
+# ── PERSISTENT VOLUMES ──────────────────────────────────────────────────────
+# PersistentVolume: represents an actual GCP disk that already exists.
+# We use pre-provisioned disks (not dynamic provisioning) so data survives
+# chart uninstalls. The disk must exist in GCP before these PVs are created.
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Values.jenkins.storage.pvName }}
+  labels:
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .Values.jenkins.storage.size }}
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: {{ .Values.storageClass.name }}
+  csi:
+    driver: pd.csi.storage.gke.io
+    volumeHandle: {{ .Values.jenkins.storage.diskHandle }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Values.nexus.storage.pvName }}
+  labels:
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .Values.nexus.storage.size }}
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: {{ .Values.storageClass.name }}
+  csi:
+    driver: pd.csi.storage.gke.io
+    volumeHandle: {{ .Values.nexus.storage.diskHandle }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Values.sonarqube.storage.pvName }}
+  labels:
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .Values.sonarqube.storage.size }}
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: {{ .Values.storageClass.name }}
+  csi:
+    driver: pd.csi.storage.gke.io
+    volumeHandle: {{ .Values.sonarqube.storage.diskHandle }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Values.postgres.storage.pvName }}
+  labels:
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .Values.postgres.storage.size }}
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: {{ .Values.storageClass.name }}
+  csi:
+    driver: pd.csi.storage.gke.io
+    volumeHandle: {{ .Values.postgres.storage.diskHandle }}

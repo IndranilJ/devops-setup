@@ -1,0 +1,223 @@
+# =============================================================================
+# values.yaml — THE Central Configuration File
+# =============================================================================
+#
+# WHAT IS values.yaml?
+# This is the heart of Helm. It's a YAML file containing all the configuration
+# values for your chart. Every value here can be referenced in templates using
+# the syntax: {{ .Values.keyName }}
+#
+# This file REPLACES:
+#   - versions.env         (all image and tool versions)
+#   - sync-versions.ps1    (no longer needed — Helm injects values at deploy time)
+#   - upgrade-tool.ps1     (replaced by: helm upgrade devops-platform ./helm/devops-platform)
+#
+# HOW VALUES FLOW:
+#   values.yaml  →  Helm template engine  →  rendered K8s YAML  →  kubectl apply
+#
+# OVERRIDING VALUES:
+# You never need to edit this file for one-off changes. Just pass --set:
+#   helm upgrade devops-platform ./helm/devops-platform --set jenkins.tag=2.504.2-lts-jdk21
+#
+# Or override with a file:
+#   helm upgrade devops-platform ./helm/devops-platform -f my-overrides.yaml
+#
+# =============================================================================
+
+# ─── GLOBAL SETTINGS ──────────────────────────────────────────────────────────
+# These are project-wide values used across multiple templates.
+# In templates, referenced as: {{ .Values.global.projectId }}
+
+global:
+  projectId: "devops-environment-488820"      # GCP Project ID
+  region: "us-central1"                        # GCP Region
+  zone: "us-central1-a"                        # GCP Zone (for persistent disks)
+  namespace: "devops"                          # Kubernetes namespace
+  artifactRegistry: "us-central1-docker.pkg.dev/devops-environment-488820/devops-agents"
+  backupBucket: "devops-environment-488820-devops-backups"
+
+# ─── SHARED UTILITY IMAGES ────────────────────────────────────────────────────
+# Used in init containers and sidecars across multiple services.
+# Single place to bump busybox or gcloud sidecar for ALL services.
+
+images:
+  busybox:
+    repository: busybox
+    tag: "1.36.1"                              # init containers (chown, sysctl)
+
+  gcloudSdk:
+    repository: google/cloud-sdk
+    tag: "502.0.0-alpine"                      # backup sidecar in Jenkins/Nexus/Postgres
+
+  kubectlSidecar:
+    repository: bitnami/kubectl
+    tag: "latest"                              # backup trigger CronJobs
+    # TODO: pin this — bitnami/kubectl:1.29.0 for example
+
+# ─── JENKINS ──────────────────────────────────────────────────────────────────
+# JAVA COMPATIBILITY RULE:
+#   jenkins.tag and jenkins.agentBaseTag MUST use the same Java version.
+#   Java 21 controller  →  use an agentBaseTag built on Java 21
+#   Java 17 controller  →  use an agentBaseTag built on Java 17
+#   Mismatch causes: UnsupportedClassVersionError in agent logs
+
+jenkins:
+  # Controller image
+  # Tag format: <jenkins-version>-lts-jdk<java-version>
+  repository: jenkins/jenkins
+  tag: "2.555.1-jdk21"                  # Satisfies 2.555.1 requirement
+
+  # Jenkins JNLP inbound agent base image
+  # MUST match Java version of the controller above
+  agentBaseRepository: jenkins/inbound-agent
+  agentBaseTag: "3301.v4363ddcca_4e7-1"       # Java 21 — matches controller
+
+  # Custom agent images built and pushed to Artifact Registry
+  # Format: YYYY.MM.N — bump when you rebuild agent images
+  agentImageVersion: "2026.05.1"
+
+  # External URL (your current LoadBalancer IP — update after cluster creation)
+  externalUrl: "http://136.112.74.7/"
+
+  # GitHub repo for seed jobs
+  githubRepoUrl: "https://github.com/IndranilJ/devops-setup.git"
+
+  # Kubernetes secret names (created by devops-env.ps1, NOT by Helm)
+  # Helm does NOT manage these secrets — they contain sensitive data
+  adminPasswordSecret: "jenkins-secrets"
+  githubTokenSecret: "jenkins-secrets"
+
+  # Resource allocation for the Jenkins controller pod
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "2Gi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+
+  # JVM heap settings
+  javaOpts: "-Xmx1536m -Xms512m -Djenkins.install.runSetupWizard=false"
+
+  # Persistent storage
+  storage:
+    size: "20Gi"
+    pvName: "jenkins-pv"
+    pvcName: "jenkins-pvc"
+    diskHandle: "projects/devops-environment-488820/zones/us-central1-a/disks/jenkins-home-disk"
+
+  # Backup schedule (cron syntax)
+  backup:
+    schedule: "0 2 * * *"                     # 2 AM daily
+
+# ─── NEXUS ────────────────────────────────────────────────────────────────────
+
+nexus:
+  repository: sonatype/nexus3
+  tag: "3.68.0"
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "2Gi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+
+  storage:
+    size: "20Gi"
+    pvName: "nexus-pv"
+    pvcName: "nexus-pvc"
+    diskHandle: "projects/devops-environment-488820/zones/us-central1-a/disks/nexus-data-disk"
+
+  backup:
+    schedule: "0 4 * * *"                     # 4 AM daily
+
+# ─── SONARQUBE ────────────────────────────────────────────────────────────────
+# COMPATIBILITY: SonarQube 10.x requires Postgres 13-16.
+# If you upgrade SonarQube major version, check Postgres compatibility first.
+
+sonarqube:
+  repository: sonarqube
+  tag: "10.5.1-community"
+
+  # Secret containing SONAR_JDBC_USERNAME and SONAR_JDBC_PASSWORD
+  # This is the same secret as postgres (same credentials)
+  dbSecret: "postgres-secret"
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "2Gi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+
+  storage:
+    size: "10Gi"
+    pvName: "sonarqube-pv"
+    pvcName: "sonarqube-pvc"
+    diskHandle: "projects/devops-environment-488820/zones/us-central1-a/disks/sonarqube-data-disk"
+
+# ─── POSTGRES ─────────────────────────────────────────────────────────────────
+# WARNING: Minor version upgrades (15.7 -> 15.8) are safe with helm upgrade.
+# Major version upgrades (15 -> 16) require pg_upgrade — DO NOT just bump this tag.
+
+postgres:
+  repository: postgres
+  tag: "15.7"
+
+  # Secret containing POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+  secret: "postgres-secret"
+
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "1Gi"
+    limits:
+      cpu: "500m"
+      memory: "1Gi"
+
+  storage:
+    size: "5Gi"
+    pvName: "postgres-pv"
+    pvcName: "postgres-pvc"
+    diskHandle: "projects/devops-environment-488820/zones/us-central1-a/disks/postgres-data-disk"
+
+  backup:
+    schedule: "0 3 * * *"                     # 3 AM daily
+
+# ─── STORAGE CLASS ────────────────────────────────────────────────────────────
+
+storageClass:
+  name: "devops-retained-storage"
+  provisioner: "pd.csi.storage.gke.io"
+  reclaimPolicy: Retain
+  diskType: "pd-standard"
+
+# ─── RESOURCE QUOTA ───────────────────────────────────────────────────────────
+
+resourceQuota:
+  requestsCpu: "4"
+  requestsMemory: "10Gi"
+  limitsCpu: "6"
+  limitsMemory: "14Gi"
+
+# ─── AGENT TOOL VERSIONS ──────────────────────────────────────────────────────
+# These are passed as --build-arg to docker build in build-agents.ps1.
+# They are NOT directly used in K8s templates (agents are external Docker images).
+# Kept here for documentation and as the source for build-agents.ps1.
+
+agentTools:
+  terraformVersion: "1.9.8"
+  awsCliVersion: "2.27.0"
+  sonarScannerVersion: "6.2.1.4610"           # Must match sonarqube.tag server version
+  gcloudSdkAptVersion: "502.0.0"              # Match images.gcloudSdk.tag
+  trivyVersion: "0.61.0"
+  dockerCliVersion: "28.1.0"
+  pythonVersion: "3.12"
+  mavenJdkVersion: "21"
+  mavenVersion: "3.9.9"
+  nodejsMajorVersion: "22"
+  dotnetSdkVersion: "8.0"
+  ubuntuBuilderTag: "22.04"

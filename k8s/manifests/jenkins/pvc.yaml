@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jenkins-pvc
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: jenkins
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: devops-retained-storage
+  volumeName: jenkins-pv
+  resources:
+    requests:
+      storage: 20Gi

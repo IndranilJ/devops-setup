@@ -1,0 +1,125 @@
+{{/*
+=============================================================================
+nexus.yaml — Nexus StatefulSet + Service + PVC
+=============================================================================
+*/}}
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.nexus.storage.pvcName }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "devops-platform.componentLabels" "nexus" | nindent 4 }}
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.storageClass.name }}
+  volumeName: {{ .Values.nexus.storage.pvName }}
+  resources:
+    requests:
+      storage: {{ .Values.nexus.storage.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexus
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "devops-platform.componentLabels" "nexus" | nindent 4 }}
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 8081
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: nexus
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nexus
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "devops-platform.componentLabels" "nexus" | nindent 4 }}
+    {{- include "devops-platform.labels" . | nindent 4 }}
+spec:
+  serviceName: nexus
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nexus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nexus
+    spec:
+      securityContext:
+        fsGroup: 200
+        runAsUser: 200
+      initContainers:
+        - name: fix-permissions
+          image: {{ .Values.images.busybox.repository }}:{{ .Values.images.busybox.tag }}
+          command: ["sh", "-c", "chown -R 200:200 /nexus-data"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: nexus-data
+              mountPath: /nexus-data
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+      containers:
+        - name: nexus
+          image: {{ .Values.nexus.repository }}:{{ .Values.nexus.tag }}
+          ports:
+            - containerPort: 8081
+              name: http
+          resources:
+            {{- toYaml .Values.nexus.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /service/rest/v1/status
+              port: 8081
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /service/rest/v1/status
+              port: 8081
+            initialDelaySeconds: 90
+            periodSeconds: 15
+            failureThreshold: 3
+          volumeMounts:
+            - name: nexus-data
+              mountPath: /nexus-data
+        - name: gcloud-backup
+          image: {{ .Values.images.gcloudSdk.repository }}:{{ .Values.images.gcloudSdk.tag }}
+          env:
+            - name: HOME
+              value: /tmp
+          command: ["sh", "-c", "tail -f /dev/null"]
+          volumeMounts:
+            - name: nexus-data
+              mountPath: /nexus-data
+              readOnly: true
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "100m"
+              memory: "256Mi"
+      volumes:
+        - name: nexus-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.nexus.storage.pvcName }}

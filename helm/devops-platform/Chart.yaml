@@ -1,0 +1,33 @@
+# =============================================================================
+# Chart.yaml — Helm Chart Metadata
+# =============================================================================
+#
+# WHAT IS A HELM CHART?
+# A Helm chart is a collection of files that describe a related set of
+# Kubernetes resources. Think of it like a "package" — the same way apt or
+# npm packages software, Helm packages Kubernetes manifests.
+#
+# A chart always has this file (Chart.yaml) plus a templates/ folder and a
+# values.yaml file. That's the minimum required structure.
+#
+# WHAT IS A RELEASE?
+# When you install a chart, Helm creates a "release" — a specific deployed
+# instance of the chart with a name. You can install the same chart multiple
+# times with different names (e.g., prod-devops, staging-devops).
+# Each release is tracked independently with its own history.
+# =============================================================================
+
+apiVersion: v2             # Helm 3 uses apiVersion: v2 (Helm 2 used v1)
+name: devops-platform      # The name of this chart
+description: >
+  Full DevOps tooling platform: Jenkins, Nexus, SonarQube, and Postgres
+  on GKE. Includes backup CronJobs, RBAC, PVCs, and full JCasC configuration.
+
+type: application          # 'application' = deployable chart
+                           # 'library' = helper chart (no templates, just functions)
+
+version: 1.0.0             # Chart version (YOUR version of this chart package)
+                           # Bump this whenever you change the chart itself
+
+appVersion: "2026.05.1"   # The version of the APPLICATION this chart deploys
+                           # Informational only — conventionally tracks AGENT_IMAGE_VERSION
